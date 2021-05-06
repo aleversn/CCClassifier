@@ -15,15 +15,16 @@ from transformers import AdamW, get_linear_schedule_with_warmup
 
 class Trainer(ITrainer):
 
-    def __init__(self, tokenizer, model_dir, dataset_name, padding_length=50, batch_size=16, batch_size_eval=64):
+    def __init__(self, tokenizer, model_dir, dataset_name, padding_length=50, num_labels=2, batch_size=16, batch_size_eval=64):
         self.tokenizer = tokenizer
         self.dataset_name = dataset_name
-        self.model_init(tokenizer, model_dir)
+        self.num_labels = num_labels
+        self.model_init(tokenizer, model_dir, num_labels)
         self.padding_length = padding_length
         self.dataloader_init(tokenizer, dataset_name, self.config['model_type'], padding_length, batch_size, batch_size_eval)
     
-    def model_init(self, tokenizer, model_dir):
-        a = AutoModel(tokenizer, model_dir)
+    def model_init(self, tokenizer, model_dir, num_labels):
+        a = AutoModel(tokenizer, model_dir, num_labels)
         print('AutoModel Choose Model: {}\n'.format(a.model_name))
         self.model_cuda = False
         self.config = a.config
@@ -35,8 +36,6 @@ class Trainer(ITrainer):
         self.train_loader = it['dataiter']
         self.eval_loader = it['dataiter_eval']
         self.test_loader = it['dataiter_test']
-        if 'dataiter_result' in it:
-            self.result_loader = it['dataiter_result']
     
     def __call__(self, resume_path=False, num_epochs=30, lr=5e-5, gpu=[0, 1, 2, 3], score_fitting=False):
         self.train(resume_path, num_epochs, lr, gpu, score_fitting)
@@ -123,7 +122,7 @@ class Trainer(ITrainer):
                 self.save_model(epoch, int(resume_path.split('/')[-1].split('_')[1].split('.')[0]))
             
             if is_eval == True:
-                acc, eval_loss = self.eval(epoch, num_epochs, eval_mode=eval_mode, gpu=gpu, save_pred_dir=_dir)
+                acc, eval_loss, _ = self.eval(epoch, num_epochs, eval_mode=eval_mode, gpu=gpu, save_pred_dir=_dir)
                 Epoch_loss_eval.append(eval_loss)
                 Epoch_acc_eval.append(acc)
                 Analysis.save_same_row_list(_dir, 'eval_log', loss=Epoch_loss_eval, acc=Epoch_acc_eval)
@@ -134,14 +133,27 @@ class Trainer(ITrainer):
             os.makedirs(_dir)
         torch.save(self.model, '{}/epoch_{}.pth'.format(_dir, epoch + 1 + save_offset))
 
-    def eval(self, epoch, num_epochs):
+    def eval(self, epoch, num_epochs, resume_path=False, eval_mode='dev', gpu=[0, 1, 2, 3]):
+        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        
+        if torch.cuda.is_available() and self.model_cuda == False:
+            self.model = torch.nn.DataParallel(self.model, device_ids=gpu).cuda()
+            self.model_cuda = True
+            self.model.to(device)
+
+        if not resume_path == False:
+            print('Accessing Resume PATH: {} ...\n'.format(resume_path))
+            model_dict = torch.load(resume_path).module.state_dict()
+            self.model.module.load_state_dict(model_dict)
+            self.model.to(device)
+        
         with torch.no_grad():
             eval_count = 0
             eval_result = []
+            eval_result_detail = torch.zeros(self.num_labels, 2).cuda()
             eval_loss = []
             self.model.eval()
-            self.eval_loader.dataset.eval_compose()
-            eval_iter = tqdm(self.eval_loader)
+            eval_iter = tqdm(self.eval_loader) if eval_mode == 'dev' else tqdm(self.test_loader)
             for it in eval_iter:
                 for key in it.keys():
                     it[key] = self.cuda(it[key])
@@ -154,12 +166,18 @@ class Trainer(ITrainer):
                 eval_count += 1
 
                 p = pred.max(-1)[1]
-                eval_result += (p == it['label']).int().tolist()
+                current_result = (p == it['label']).int().tolist()
+                eval_result += current_result
+                for idx, result in enumerate(current_result):
+                    eval_result_detail[it['label'][idx].tolist(), 1] += 1
+                    if result == 1:
+                        eval_result_detail[it['label'][idx].tolist(), 0] += 1
 
                 eval_iter.set_description('Eval: {}/{}'.format(epoch + 1, num_epochs))
                 eval_iter.set_postfix(eval_loss=np.mean(eval_loss), eval_acc=np.mean(eval_result))
             
-            return np.mean(eval_result), np.mean(train_loss)
+            print(eval_result_detail, eval_result_detail[:, 0] / eval_result_detail[:, 1])
+            return np.mean(eval_result), np.mean(eval_loss), eval_result_detail.tolist()
     
     def save_pred(self, save_dir, resume_path=None, gpu=[0, 1, 2, 3]):
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")

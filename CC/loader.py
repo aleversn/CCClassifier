@@ -9,25 +9,16 @@ class AutoDataloader(IDataLoader):
         self.result_set = None
         self.model_type = model_type
         model_list_1 = ['bert']
-        if data_name == 'sim':
+        if data_name == 'cls':
             if model_type in model_list_1:
-                self.training_set = SimDataset(tokenizer, './datasets/FNSim/train.csv', padding_length=padding_length, is_train=True)
-                self.dev_set = SimDataset(tokenizer, './datasets/FNSim/dev.csv', padding_length=padding_length)
-                self.test_set = SimDataset(tokenizer, './datasets/FNSim/test.csv', padding_length=padding_length)
-                self.result_set = EvalSim(tokenizer, "./datasets/FNSim/dev.csv", "./datasets/FNSim/target_list", padding_length=padding_length)
+                self.training_set = ClsDataset(tokenizer, './dataset/THUNews_proceed', padding_length=padding_length, split_ratio=[0, 0.8], is_train=True)
+                self.dev_set = ClsDataset(tokenizer, './dataset/THUNews_proceed', padding_length=padding_length, split_ratio=[0.8, 0.9], shuffle=False)
+                self.test_set = ClsDataset(tokenizer, './dataset/THUNews_proceed', padding_length=padding_length, split_ratio=[0.9, 1], shuffle=False)
     
-    def __call__(self, batch_size=16, batch_size_eval=64, fit_sample=False):
+    def __call__(self, batch_size=16, batch_size_eval=64):
         dataiter = DataLoader(self.training_set, batch_size=batch_size)
         dataiter_eval = DataLoader(self.dev_set, batch_size=batch_size_eval)
         dataiter_test = DataLoader(self.test_set, batch_size=batch_size_eval)
-        if self.result_set is not None:
-            dataiter_result = DataLoader(self.result_set, batch_size=batch_size_eval)
-            return {
-                "dataiter": dataiter,
-                "dataiter_eval": dataiter_eval,
-                "dataiter_test": dataiter_test,
-                "dataiter_result": dataiter_result
-            }
         return {
                 "dataiter": dataiter,
                 "dataiter_eval": dataiter_eval,
