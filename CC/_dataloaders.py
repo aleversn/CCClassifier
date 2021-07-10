@@ -89,3 +89,36 @@ class ClsDataset(Dataset):
     
     def __len__(self):
         return len(self.final_list)
+
+class SCClsDataset(Dataset):
+    
+    def __init__(self, tokenizer, file_name, padding_length=128, shuffle=True):
+        self.tokenizer = tokenizer
+        self.padding_length = padding_length
+        self.ori_list = self.load_train(file_name)
+        if shuffle:
+            random.shuffle(self.ori_list)
+    
+    def load_train(self, file_name):
+        with open(file_name, encoding='utf-8') as f:
+            ori_list = f.read().split('\n')
+        if ori_list[-1] == '':
+            ori_list = ori_list[:-1]
+        return ori_list
+    
+    def __getitem__(self, idx):
+        line = self.ori_list[idx].strip().split('\t')
+        s, label = line[0], line[1]
+        T = self.tokenizer(s, add_special_tokens=True, max_length=self.padding_length, padding='max_length', truncation=True)
+        input_ids = torch.tensor(T['input_ids'])
+        attn_mask = torch.tensor(T['attention_mask'])
+        token_type_ids = torch.tensor(T['token_type_ids'])
+        return {
+            "input_ids": input_ids,
+            "attention_mask": attn_mask,
+            "token_type_ids": token_type_ids,
+            "label": int(label)
+        }
+    
+    def __len__(self):
+        return len(self.ori_list)

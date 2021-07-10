@@ -8,18 +8,16 @@ import numpy as np
 from CC.ICCStandard import IPredict
 from CC.model import AutoModel
 from CC.loader import AutoDataloader
-from CC._dataloaders import PredSim
 from CC.analysis import Analysis
 from tqdm import tqdm
 from torch.autograd import Variable
 
 class Predictor(IPredict):
 
-    def __init__(self, tokenizer, model_dir, target_file_name, padding_length=128, resume_path=False, batch_size=64, gpu=[0]):
+    def __init__(self, tokenizer, model_dir, padding_length=128, resume_path=False, num_labels=2, gpu=[0]):
         self.tokenizer = tokenizer
-        self.model_init(tokenizer, model_dir)
+        self.model_init(tokenizer, model_dir, num_labels)
         self.padding_length = padding_length
-        self.dataloader_init(tokenizer, target_file_name, batch_size, padding_length)
 
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         self.model.to(device)
@@ -31,43 +29,50 @@ class Predictor(IPredict):
         self.model = torch.nn.DataParallel(self.model, device_ids=gpu).cuda()
         self.model.to(device)
     
-    def model_init(self, tokenizer, model_dir):
-        a = AutoModel(tokenizer, model_dir)
+    def model_init(self, tokenizer, model_dir, num_labels):
+        a = AutoModel(tokenizer, model_dir, num_labels)
         print('AutoModel Choose Model: {}\n'.format(a.model_name))
         self.model_cuda = False
         self.config = a.config
         self.model = a()
     
-    def dataloader_init(self, tokenizer, target_file_name, batch_size, padding_length):
-        result_dataset = PredSim(tokenizer, target_file_name, padding_length)
-        self.result_loader = DataLoader(result_dataset, batch_size=batch_size)
-    
     def __call__(self, X):
         return self.predict(X)
     
+    def data_process(self, sentences):
+        if type(sentences) == str:
+            sentences = [sentences]
+        input_ids = []
+        attn_mask = []
+        token_type_ids = []
+        label = []
+        for sentence in sentences:
+            T = self.tokenizer(sentence, add_special_tokens=True, max_length=self.padding_length, padding='max_length', truncation=True)
+            input_ids.append(torch.tensor(T['input_ids']))
+            attn_mask.append(torch.tensor(T['attention_mask']))
+            token_type_ids.append(torch.tensor(T['token_type_ids']))
+            label.append(torch.tensor(0))
+        return {
+            "input_ids": torch.stack(input_ids),
+            "attention_mask": torch.stack(attn_mask),
+            "token_type_ids": torch.stack(token_type_ids),
+            "label": torch.stack(label)
+        }
+    
     def predict(self, X):
         with torch.no_grad():
-            result = []
-            self.model.eval()
-            result_iter = self.result_loader
-            result_iter.dataset.computed_eval_set(X)
-            result_iter = self.result_loader
-            src_result = torch.tensor([]).cuda()
+            it = self.data_process(X)
 
-            for it in result_iter:
-                for key in it.keys():
-                    it[key] = self.cuda(it[key])
+            for key in it.keys():
+                it[key] = self.cuda(it[key])
 
-                loss, pred = self.model(**it)
-                loss = loss.mean()
+            loss, pred = self.model(**it)
+            loss = loss.mean()
 
-                pred = pred[:, 1]
-                src_result = torch.cat([src_result, pred], -1)
+            pred = F.softmax(pred, dim=-1)
+            val, p = pred.topk(5)
             
-            pred_result = src_result.sort(dim=-1, descending=True)[1].tolist()
-            result = [self.result_loader.dataset.ori_list[idx] for idx in pred_result]
-            
-            return result
+            return val.tolist(), p.tolist()
     
     def cuda(self, inputX):
         if type(inputX) == tuple:
