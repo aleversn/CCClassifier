@@ -37,6 +37,17 @@ class Trainer(ITrainer):
         self.eval_loader = it['dataiter_eval']
         self.test_loader = it['dataiter_test']
     
+    def save_pretrained(self, resume_path, save_name, gpu=[0, 1, 2, 3]):
+        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        self.model = torch.nn.DataParallel(self.model, device_ids=gpu).cuda()
+        self.model.to(device)
+
+        print('Accessing Resume PATH: {} ...\n'.format(resume_path))
+        model_dict = torch.load(resume_path).module.state_dict()
+        self.model.module.load_state_dict(model_dict)
+        self.model.to(device)
+        self.model.module.model.save_pretrained(save_name)
+    
     def __call__(self, resume_path=False, num_epochs=30, lr=5e-5, gpu=[0, 1, 2, 3], score_fitting=False):
         self.train(resume_path, num_epochs, lr, gpu, score_fitting)
 
@@ -151,6 +162,8 @@ class Trainer(ITrainer):
             eval_count = 0
             eval_result = []
             eval_result_detail = torch.zeros(self.num_labels, 2).cuda()
+            eval_pred = []
+            eval_gold = []
             eval_loss = []
             self.model.eval()
             eval_iter = tqdm(self.eval_loader) if eval_mode == 'dev' else tqdm(self.test_loader)
@@ -167,6 +180,8 @@ class Trainer(ITrainer):
 
                 p = pred.max(-1)[1]
                 current_result = (p == it['label']).int().tolist()
+                eval_pred += p.tolist()
+                eval_gold += it['label'].tolist()
                 eval_result += current_result
                 for idx, result in enumerate(current_result):
                     eval_result_detail[it['label'][idx].tolist(), 1] += 1
@@ -177,6 +192,8 @@ class Trainer(ITrainer):
                 eval_iter.set_postfix(eval_loss=np.mean(eval_loss), eval_acc=np.mean(eval_result))
             
             print(eval_result_detail, eval_result_detail[:, 0] / eval_result_detail[:, 1])
+            _dir = './log/{}/{}'.format(self.dataset_name, self.config["model_type"])
+            Analysis.save_same_row_list(_dir, 'pred_gold', eval_pred=eval_pred, eval_gold=eval_gold)
             return np.mean(eval_result), np.mean(eval_loss), eval_result_detail.tolist()
     
     def save_pred(self, save_dir, resume_path=None, gpu=[0, 1, 2, 3]):
