@@ -92,7 +92,7 @@ class Trainer(ITrainer):
             train_count = 0
             train_result = []
             train_loss = []
-            self.train_loader.dataset.train_compose()
+            # self.train_loader.dataset.train_compose()
             train_iter = tqdm(self.train_loader)
             self.model.train()
             for it in train_iter:
@@ -133,7 +133,7 @@ class Trainer(ITrainer):
                 self.save_model(epoch, int(resume_path.split('/')[-1].split('_')[1].split('.')[0]))
             
             if is_eval == True:
-                acc, eval_loss, _ = self.eval(epoch, num_epochs, eval_mode=eval_mode, gpu=gpu, save_pred_dir=_dir)
+                acc, eval_loss, _ = self.eval(epoch, num_epochs, eval_mode=eval_mode, gpu=gpu)
                 Epoch_loss_eval.append(eval_loss)
                 Epoch_acc_eval.append(acc)
                 Analysis.save_same_row_list(_dir, 'eval_log', loss=Epoch_loss_eval, acc=Epoch_acc_eval)
@@ -161,12 +161,18 @@ class Trainer(ITrainer):
         with torch.no_grad():
             eval_count = 0
             eval_result = []
-            eval_result_detail = torch.zeros(self.num_labels, 2).cuda()
             eval_pred = []
             eval_gold = []
             eval_loss = []
             self.model.eval()
             eval_iter = tqdm(self.eval_loader) if eval_mode == 'dev' else tqdm(self.test_loader)
+            tp = {}
+            fp = {}
+            fn = {}
+            for i in range(self.num_labels):
+                tp[i] = 0
+                fp[i] = 0
+                fn[i] = 0
             for it in eval_iter:
                 for key in it.keys():
                     it[key] = self.cuda(it[key])
@@ -179,22 +185,32 @@ class Trainer(ITrainer):
                 eval_count += 1
 
                 p = pred.max(-1)[1]
-                current_result = (p == it['label']).int().tolist()
                 eval_pred += p.tolist()
                 eval_gold += it['label'].tolist()
-                eval_result += current_result
-                for idx, result in enumerate(current_result):
-                    eval_result_detail[it['label'][idx].tolist(), 1] += 1
-                    if result == 1:
-                        eval_result_detail[it['label'][idx].tolist(), 0] += 1
+                for pred, gold in zip(eval_pred, eval_gold):
+                    if pred == gold:
+                        tp[gold] += 1
+                    else:
+                        fn[gold] += 1
+                        fp[pred] += 1
+                
+                result_dict = {}
+                for i in range(self.num_labels):
+                    result_dict[str(i)] = {
+                        'precision': tp[i] / (tp[i] + fp[i]),
+                        'recall': tp[i] / (tp[i] + fn[i]),
+                        'f1': 2 * tp[i] / (2*tp[i] + fp[i] + fn[i]) if tp[i] != 0 else 0,
+                    }
+                result_dict['avg_f1'] = np.mean([result_dict[str(i)]['f1'] for k in range(self.num_labels)])
+                result_dict['avg_precision'] = np.mean([result_dict[str(i)]['precision'] for k in range(self.num_labels)])
+                result_dict['avg_recall'] = np.mean([result_dict[str(i)]['recall'] for k in range(self.num_labels)])
 
                 eval_iter.set_description('Eval: {}/{}'.format(epoch + 1, num_epochs))
-                eval_iter.set_postfix(eval_loss=np.mean(eval_loss), eval_acc=np.mean(eval_result))
+                eval_iter.set_postfix(eval_loss=np.mean(eval_loss), eval_acc=np.mean(eval_result), **result_dict)
             
-            print(eval_result_detail, eval_result_detail[:, 0] / eval_result_detail[:, 1])
             _dir = './log/{}/{}'.format(self.dataset_name, self.config["model_type"])
             Analysis.save_same_row_list(_dir, 'pred_gold', eval_pred=eval_pred, eval_gold=eval_gold)
-            return np.mean(eval_result), np.mean(eval_loss), eval_result_detail.tolist()
+            return np.mean(eval_result), np.mean(eval_loss), result_dict
     
     def save_pred(self, save_dir, resume_path=None, gpu=[0, 1, 2, 3]):
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")

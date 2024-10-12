@@ -19,14 +19,14 @@ from transformers import BertTokenizer
 
 # %%
 tokenizer = BertTokenizer.from_pretrained('model/chinese_wwm_ext')
-trainer = Trainer(tokenizer, model_dir='model/chinese_wwm_ext', dataset_name='cls', padding_length=400, num_labels=14, batch_size=32, batch_size_eval=500)
+trainer = Trainer(tokenizer, model_dir='model/chinese_wwm_ext', dataset_name='sentiment', padding_length=128, num_labels=3, batch_size=32, batch_size_eval=128)
 
 # %%
 # Common Training
-trainer.train(num_epochs=30, lr=1e-5, resume_path='./model/cls/bert/epoch_1.pth', gpu=[0, 1], eval_mode='test', is_eval=False)
+trainer.train(num_epochs=30, lr=1e-5, gpu=[0, 1], eval_mode='sentiment', is_eval=True)
 
 # %%
-trainer.eval(0, 0, resume_path='./model/cls/bert/epoch_1.pth', gpu=[0, 1], eval_mode='dev')
+trainer.eval(0, 0, gpu=[0, 1], eval_mode='dev')
 
 # %%
 from CC.predictor import *

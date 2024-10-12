@@ -19,8 +19,13 @@ class AutoDataloader(IDataLoader):
                 self.training_set = SCClsDataset(tokenizer, './dataset/A7.dev.txt', padding_length=padding_length)
                 self.dev_set = SCClsDataset(tokenizer, './dataset/A7.dev.txt', padding_length=padding_length, shuffle=False)
                 self.test_set = SCClsDataset(tokenizer, './dataset/A7.dev.txt', padding_length=padding_length, shuffle=False)
+        elif data_name == 'sentiment':
+            if model_type in model_list_1:
+                self.training_set = SCClsDataset(tokenizer, './dataset/Sentiment/train.jsonl', padding_length=padding_length, mode='json')
+                self.dev_set = SCClsDataset(tokenizer, './dataset/Sentiment/test.jsonl', padding_length=padding_length, mode='json', shuffle=False)
+                self.test_set = SCClsDataset(tokenizer, './dataset/Sentiment/test.jsonl', padding_length=padding_length, mode='json', shuffle=False)
     
-    def __call__(self, batch_size=16, batch_size_eval=64):
+    def __call__(self, batch_size=32, batch_size_eval=64):
         dataiter = DataLoader(self.training_set, batch_size=batch_size)
         dataiter_eval = DataLoader(self.dev_set, batch_size=batch_size_eval)
         dataiter_test = DataLoader(self.test_set, batch_size=batch_size_eval)
